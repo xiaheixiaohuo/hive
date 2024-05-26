@@ -1,0 +1,70 @@
+题目:求用户1日、3日、7日留存率
+
+概念问题:
+第N日活路用户留存率:以基准日的活跃用户数为主,第N日后依然活跃的用户占基准日活联用户的比例
+第1日留存率(即次日留存):(以基准日当天活跃的用户中,基准日之后的第1天还活跃的用户数)/基准日当天总活跃用户数;
+第3日留存率:(以基准日当天活跃的用户中,基准日之后的第3天还活跃的用户数)/基准日当天总活跃用户数;
+第7日留存率:(以基准日当天活跃的用户中,基准日之后的第7天还活跃的用户数)/基准日当天总活跃用户数;
+
+create table user_log
+(
+user_id bigint,
+time   string
+)
+
+INSERT INTO user_log (user_id, time) VALUES
+(1, '2024-05-01'),
+(1, '2024-05-02'),
+(1, '2024-05-03'),
+(2, '2024-05-01'),
+(2, '2024-05-03'),
+(3, '2024-05-01'),
+(3, '2024-05-07'),
+(4, '2024-05-01'),
+(5, '2024-05-01'),
+(5, '2024-05-02');
+
+-- 计算留存率的SQL查询
+WITH base_day_users AS (
+    SELECT DISTINCT
+        user_id,
+        TO_DATE(time) AS base_day
+    FROM user_log
+),
+retained_users AS (
+    SELECT
+        b.user_id,
+        b.base_day,
+        MAX(CASE WHEN DATEDIFF(u.time, b.base_day) = 1 THEN 1 ELSE 0 END) AS day1_retained,
+        MAX(CASE WHEN DATEDIFF(u.time, b.base_day) = 3 THEN 1 ELSE 0 END) AS day3_retained,
+        MAX(CASE WHEN DATEDIFF(u.time, b.base_day) = 7 THEN 1 ELSE 0 END) AS day7_retained
+    FROM
+        base_day_users b
+    LEFT JOIN
+        user_log u
+    ON b.user_id = u.user_id
+    AND DATEDIFF(u.time, b.base_day) IN (1, 3, 7)
+    GROUP BY
+        b.user_id, b.base_day
+),
+retention_rates AS (
+    SELECT
+        base_day,
+        SUM(day1_retained) AS day1_retained,
+        SUM(day3_retained) AS day3_retained,
+        SUM(day7_retained) AS day7_retained,
+        COUNT(user_id) AS total_users
+    FROM
+        retained_users
+    GROUP BY
+        base_day
+)
+SELECT
+    base_day,
+    day1_retained / total_users AS day1_retention_rate,
+    day3_retained / total_users AS day3_retention_rate,
+    day7_retained / total_users AS day7_retention_rate
+FROM
+    retention_rates
+ORDER BY
+    base_day;
