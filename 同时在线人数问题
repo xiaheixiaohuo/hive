@@ -1,0 +1,74 @@
+为了计算每个主播的最高同时在线人数 (PCU, Peak Concurrent Users)，我们需要考虑时间重叠的情况。这个问题涉及到一个常见的时间间隔重叠问题。我们可以将上线和下线时间分别标记为+1和-1的事件，然后进行扫描计算。
+
+CREATE TABLE user_log (
+    user_id BIGINT,
+    start_time STRING,
+    end_time STRING
+);
+
+-- 插入示例数据
+INSERT INTO user_log VALUES
+(1, '2021-06-14 12:12:12', '2021-06-14 18:12:12'),
+(2, '2021-06-14 13:12:12', '2021-06-14 16:12:12'),
+(3, '2021-06-14 13:15:12', '2021-06-14 18:12:12'),
+(4, '2021-06-14 15:12:12', '2021-06-14 16:12:12'),
+(5, '2021-06-14 15:18:12', '2021-06-14 18:12:12'),
+(6, '2021-06-14 18:12:12', '2021-06-14 23:12:12'),
+(7, '2021-06-14 21:12:12', '2021-06-14 23:15:12'),
+(8, '2021-06-14 22:12:12', '2021-06-14 23:10:12');
+
+查询逻辑
+生成事件表：将上线和下线事件分开，并标记+1和-1。
+计算同时在线人数：扫描事件表，计算每个时刻的在线人数，找出最高值。
+
+WITH events AS (
+    SELECT
+        user_id,
+        start_time AS event_time,
+        1 AS event_type
+    FROM
+        user_log
+    UNION ALL
+    SELECT
+        user_id,
+        end_time AS event_time,
+        -1 AS event_type
+    FROM
+        user_log
+),
+sorted_events AS (
+    SELECT
+        user_id,
+        event_time,
+        event_type
+    FROM
+        events
+    ORDER BY
+        user_id, event_time, event_type
+),
+cumulative_online AS (
+    SELECT
+        user_id,
+        event_time,
+        SUM(event_type) OVER (PARTITION BY user_id ORDER BY event_time) AS current_online
+    FROM
+        sorted_events
+)
+SELECT
+    user_id,
+    MAX(current_online) AS peak_concurrent_users
+FROM
+    cumulative_online
+GROUP BY
+    user_id
+ORDER BY
+    user_id;
+
+
+
+解释
+events: 将上线时间和下线时间分别标记为+1和-1。
+sorted_events: 对所有事件按主播ID和时间排序，以确保事件按时间顺序处理。
+cumulative_online: 通过窗口函数 SUM(event_type) OVER (PARTITION BY user_id ORDER BY event_time) 计算每个时间点的当前在线人数。
+最终查询: 对每个主播计算最高同时在线人数（PCU）。
+此查询首先将上线和下线事件展开为独立的事件，然后通过排序和窗口函数计算每个时间点的在线人数，并最终找出最高在线人数。调整表名和字段名以适应你的实际数据。
