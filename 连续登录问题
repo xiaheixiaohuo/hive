@@ -1,0 +1,160 @@
+# 1.连续登录问题
+求连续登录7天的用户
+CREATE TABLE user_logins (
+    uid STRING,
+    dt DATE
+);
+
+select 
+  uid
+from
+    (select
+        uid,
+        group_id,
+        max(dt) as max_dt,
+        min(dt) as min_dt,
+        count(*) as cnt 
+    from 
+      (select 
+          uid,
+          dt,
+          date_sub(dt,rn) as group_id
+      from
+        (select
+            uid，
+            dt,
+            row_number()over(partition by uid order by dt asc ) as rn 
+        from user_logins
+        )t
+      )t1
+    group by 1,2 
+    )t2
+where cnt >= 7 
+
+AI 的结果：
+WITH user_logins_with_lag AS (
+    SELECT 
+        uid,
+        dt,
+        LAG(dt, 1) OVER (PARTITION BY uid ORDER BY dt) AS prev_dt
+    FROM 
+        user_logins
+),
+user_login_streaks AS (
+    SELECT 
+        uid,
+        dt,
+        prev_dt,
+        CASE 
+            WHEN prev_dt IS NULL OR DATEDIFF(dt, prev_dt) > 1 THEN 1 
+            ELSE 0 
+        END AS is_start_of_streak
+    FROM 
+        user_logins_with_lag
+),
+streaks AS (
+    SELECT 
+        uid,
+        dt,
+        SUM(is_start_of_streak) OVER (PARTITION BY uid ORDER BY dt) AS streak_id
+    FROM 
+        user_login_streaks
+),
+streak_lengths AS (
+    SELECT 
+        uid,
+        streak_id,
+        COUNT(*) AS streak_length
+    FROM 
+        streaks
+    GROUP BY 
+        uid, streak_id
+)
+SELECT DISTINCT
+    uid
+FROM 
+    streak_lengths
+WHERE 
+    streak_length >= 7;
+
+
+优化：DENSE_RANK() 而不是 row_number() ，这样可以避免一天多次登录的问题
+
+
+升级版：连续登录N天中间可以间隔M天，N>>M 
+连续登录7天中间可以间隔1天
+
+
+
+
+WITH user_logins_with_lag AS (
+    SELECT 
+        uid,
+        dt,
+        LAG(dt, 1) OVER (PARTITION BY uid ORDER BY dt) AS prev_dt
+    FROM 
+        user_logins
+),
+user_login_streaks AS (
+    SELECT 
+        uid,
+        dt,
+        prev_dt,
+        CASE 
+            WHEN prev_dt IS NULL OR DATEDIFF(dt, prev_dt) > 2 THEN 1 
+            ELSE 0 
+        END AS is_start_of_streak
+    FROM 
+        user_logins_with_lag
+),
+streaks AS (
+    SELECT 
+        uid,
+        dt,
+        SUM(is_start_of_streak) OVER (PARTITION BY uid ORDER BY dt) AS streak_id
+    FROM 
+        user_login_streaks
+),
+streak_lengths AS (
+    SELECT 
+        uid,
+        streak_id,
+        MIN(dt) AS streak_start,
+        MAX(dt) AS streak_end,
+        COUNT(*) AS streak_length,  --登录天数
+        DATEDIFF(MAX(dt), MIN(dt)) + 1 AS streak_days   --段内天数
+    FROM 
+        streaks
+    GROUP BY 
+        uid, streak_id
+),
+qualified_streaks AS (
+    SELECT 
+        uid,
+        streak_start,
+        streak_end,
+        streak_length,
+        streak_days
+    FROM 
+        streak_lengths
+    WHERE 
+        streak_days <= 8
+        AND streak_length >= 7
+)
+SELECT DISTINCT
+    uid
+FROM 
+    qualified_streaks;
+
+
+解释：
+
+user_logins_with_lag: 使用 LAG 函数来获取用户上一次的登录日期 prev_dt。
+
+user_login_streaks: 通过 DATEDIFF 函数检查当前日期与前一次登录日期的差异，确定是否是一个新的登录段的开始。如果日期差超过2天（允许间断1天），则标记为新登录段的开始。
+
+streaks: 使用 SUM 窗口函数为每个用户计算一个连续的登录段 streak_id。
+
+streak_lengths: 计算每个连续登录段的起始日期 streak_start，结束日期 streak_end，登录天数 streak_length，以及段内的实际天数 streak_days。
+
+qualified_streaks: 筛选出满足条件的登录段，这里要求 streak_days 不超过8天（7天登录允许1天间断），且实际登录天数 streak_length 要达到或超过7天。
